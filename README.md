@@ -29,18 +29,23 @@ QQ ──► AstrBot ──► 本插件 ──HTTP──► sing-song 网关 �
 - QQ 语音发送失败时自动降级为文件附件，再失败附音频直链
 
 ### 目前进度
-beewith自有bot平台开发 done√
-astrbot插件移植 done√
-dsh插件移植  onlist
-插件优化：可选伴奏混频 onlist
-本地模型运行兼容 onlist
-算法和音色优化 onlist
-如果有bug、想法或建议欢迎提issue
-欢迎抖音关注  ```5- 长按复制此条消息，打开抖音搜索，查看TA的更多作品。 https://v.douyin.com/pVt-TXIBWE0/ 8@4.com :8pm```
+- beewith自有bot平台开发 done√
+- astrbot插件移植 done√
+- dsh插件移植  onlist
+- 插件优化：可选伴奏混频 onlist
+- 本地模型运行兼容 onlist
+- 算法和音色优化 onlist
+- 如果有bug、想法或建议欢迎提issue
+- 欢迎抖音关注  ```5- 长按复制此条消息，打开抖音搜索，查看TA的更多作品。 https://v.douyin.com/pVt-TXIBWE0/ 8@4.com :8pm```
 更多联系方式（qq群等）见主页链接
 
 ## 快速开始（FlowBee，30 秒）
+你需要有一个服务器并且运行astrbot，
+如果你没有服务器或不想自己部署，可以依赖后续flowbee的beewith项目，
+服务器都会由flowbee建好，你无需承担完整的服务器费用，可能每个月几块钱足够。
+如果你需要一台自己的服务器，直接[【腾讯云】4核4G3M79元/年](https://curl.qcloud.com/VKDxR8f7)，
 
+下面是步骤:
 1. 安装插件（AstrBot 插件目录下）：
 
    ```bash
@@ -51,8 +56,8 @@ dsh插件移植  onlist
    在 AstrBot 网页后台启用插件（首次会自动安装依赖）。
 
 2. 打开插件配置页，只需填一项：**FlowBee API Key**（在 [FlowBee](https://flowbee.top) 获取，生成按次计费到你的 FlowBee 账户，免部署免服务器）。其余保持默认即可。
-
-3. 群里开唱：
+   'RECOMMEND':不用折腾visa卡和注册replicate。
+4. 群里开唱：
 
    ```
    /点歌 雨爱
