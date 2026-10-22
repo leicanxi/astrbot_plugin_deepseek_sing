@@ -5,7 +5,7 @@
 插件本身只是一个**轻量网关客户端**——歌曲搜索、下载、RVC 推理全部在网关侧完成，你的 AstrBot 服务器**不需要**安装 torch / ffmpeg / yt-dlp，也不需要 GPU。
 
 ```
-QQ ──► AstrBot ──► 本插件 ──HTTP──► sing-song 网关 ──► B站搜索 + Replicate RVC 翻唱
+QQ ──► AstrBot ──► 本插件 ──HTTP──► sing-song 网关 ──► 音乐搜索下载 + Replicate RVC 翻唱
                           │                ├── FlowBee（免部署，按次计费）
                           │                └── 或你自托管的 sing-gateway（用自己的 Replicate Token）
                           └── 音色白名单：FlowBee 用平台名单 / 自托管可自己配
@@ -21,7 +21,7 @@ QQ ──► AstrBot ──► 本插件 ──HTTP──► sing-song 网关 �
 
 ## 功能
 
-- `/点歌 歌名 [音色名]` —— B 站搜歌 + AI 翻唱，直接发语音
+- `/点歌 歌名 [音色名]` —— 网易云免费曲库搜歌 + AI 翻唱，直接发语音
 - `/音色` —— 拉取当前可选音色列表
 - LLM 工具调用 —— 直接对机器人说「唱一首《歌名》」即可
 - 两种模式一键切换：FlowBee 免部署按次计费 / 自托管网关用你自己的 Replicate Token
@@ -65,6 +65,8 @@ QQ ──► AstrBot ──► 本插件 ──HTTP──► sing-song 网关 �
    /音色
    ```
 
+   > FlowBee 的曲库是网易云免费曲库（机房 IP 也能用、无需账号）；VIP / 数字专辑歌曲拿不到音频，机器人会提示换一首免费的。
+
 ## 自托管网关（用自己的 Replicate Token）
 
 不想走按次计费？在你自己的服务器（和 AstrBot 同机即可）跑一个 sing-gateway，插件的生成就只花你自己 Replicate 账户的钱。
@@ -82,6 +84,7 @@ QQ ──► AstrBot ──► 本插件 ──HTTP──► sing-song 网关 �
    ```bash
    export SING_GATEWAY_TOKEN='choose-a-long-random-secret'
    export REPLICATE_API_TOKEN='r8_...'
+   export SING_MUSIC_SOURCE=netease   # 可选：海外服务器建议（B站对机房 IP 有 412 风控）；默认 bilibili
    octop-sing-gateway --host 127.0.0.1 --port 9001
    ```
 
@@ -143,10 +146,10 @@ QQ ──► AstrBot ──► 本插件 ──HTTP──► sing-song 网关 �
 
 ### 缓存是怎么回事？
 
-网关按「B站视频 + 截取起点/长度 + 音色 + 模型参数」生成指纹，把生成结果缓存在网关磁盘上（默认保留 7 天、最多 50 条，同一网关的所有用户共享）：
+网关按「源歌曲 + 截取起点/长度 + 音色 + 模型参数」生成指纹，把生成结果缓存在网关磁盘上（默认保留 7 天、最多 50 条，同一网关的所有用户共享）：
 
-- **命中**：7 天内用**完全相同的参数**对同一视频再次生成 → 直接返回缓存，不再跑 Replicate，网关侧成本近似为零。
-- **不命中**：新歌第一次唱、搜索落到不同视频投稿、更换音色或截取参数、超过 7 天或被容量挤出 → 正常全价渲染。
+- **命中**：7 天内用**完全相同的参数**对同一首歌再次生成 → 直接返回缓存，不再跑 Replicate，网关侧成本近似为零。
+- **不命中**：新歌第一次唱、搜索落到不同的歌曲源、更换音色或截取参数、超过 7 天或被容量挤出 → 正常全价渲染。
 
 两点需要知悉：
 
@@ -163,7 +166,7 @@ QQ ──► AstrBot ──► 本插件 ──HTTP──► sing-song 网关 �
 
 插件与网关之间是 OpenAI 兼容协议：
 
-- 生成：`POST {base}/chat/completions`，`model=sing-song`，user content 为 JSON：`{"song": "歌名", "voice": "音色名", "start": 60, "duration": 25, "pitch": 2, "pitch_mode": "no-change"}`（`song` 可换成 `url` 直传 B 站链接）。返回的 assistant content 是 JSON 音频块 `{"type": "audio", "source": {"url": "..."}}`。
+- 生成：`POST {base}/chat/completions`，`model=sing-song`，user content 为 JSON：`{"song": "歌名", "voice": "音色名", "start": 60, "duration": 25, "pitch": 2, "pitch_mode": "no-change"}`（`song` 可换成 `url` 直传歌曲链接，支持网易云 / B 站）。返回的 assistant content 是 JSON 音频块 `{"type": "audio", "source": {"url": "..."}}`。
 - 拉音色：直连网关用 `GET {base}/voices`；经 new-api 中转时用 `POST {base}/chat/completions`、`model=sing-voices`（免费），返回 `{"type": "voices", "voices": [...]}`。
 
 ## License
