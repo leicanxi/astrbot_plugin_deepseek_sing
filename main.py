@@ -260,7 +260,7 @@ class DeepSeekSingPlugin(Star):
             )
         except Exception:
             logger.warning("[deepseek-sing] 音频发送全部失败", exc_info=True)
-            await event.send(event.plain_result(f"⚠️ 语音发送失败，可直接播放：{url}"))
+            await event.send(event.plain_result(f"⚠️ 语音发送失败，音频链接：{url}"))
         finally:
             if path is not None:
                 try:
