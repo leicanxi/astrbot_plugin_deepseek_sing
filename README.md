@@ -21,7 +21,7 @@ QQ ──► AstrBot ──► 本插件 ──HTTP──► sing-song 网关 �
 
 ## 功能
 
-- `/点歌 歌名 [音色名]` —— 网易云免费曲库搜歌 + AI 翻唱，直接发语音
+- `/点歌 歌名 [音色名]` —— 网易云曲库搜歌 + AI 翻唱，直接发语音（VIP 歌曲自动解锁：完整曲目或约 45 秒试听段）
 - `/音色` —— 拉取当前可选音色列表
 - LLM 工具调用 —— 直接对机器人说「唱一首《歌名》」即可
 - 两种模式一键切换：FlowBee 免部署按次计费 / 自托管网关用你自己的 Replicate Token
@@ -65,7 +65,7 @@ QQ ──► AstrBot ──► 本插件 ──HTTP──► sing-song 网关 �
    /音色
    ```
 
-   > FlowBee 的曲库是网易云免费曲库（机房 IP 也能用、无需账号）；VIP / 数字专辑歌曲拿不到音频，机器人会提示换一首免费的。
+   > FlowBee 的曲库是网易云（机房 IP 也能用、无需账号）。VIP / 数字专辑歌曲会通过社区解锁接口尽力获取——可能是完整曲目，也可能是约 45 秒的试听段（唱短片段完全够用）；解锁能力依赖社区维护、可能随网易封堵失效，失效时 VIP 歌会提示换一首免费的。
 
 ## 自托管网关（用自己的 Replicate Token）
 
@@ -85,6 +85,7 @@ QQ ──► AstrBot ──► 本插件 ──HTTP──► sing-song 网关 �
    export SING_GATEWAY_TOKEN='choose-a-long-random-secret'
    export REPLICATE_API_TOKEN='r8_...'
    export SING_MUSIC_SOURCE=netease   # 可选：海外服务器建议（B站对机房 IP 有 412 风控）；默认 bilibili
+   export SING_NCM_API=http://127.0.0.1:3010   # 可选：搭配 ncm-api sidecar 解锁 VIP 曲库，见 sing-gateway.md
    octop-sing-gateway --host 127.0.0.1 --port 9001
    ```
 
