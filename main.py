@@ -76,7 +76,7 @@ def _command_arg(event: AstrMessageEvent, command: str) -> str:
     "leicanxi",
     "AI 唱歌：B站点歌 + RVC 翻唱，走 sing-song 网关（FlowBee 免部署或自托管），音色白名单可自配",
     "0.2.0",
-    "https://github.com/leicanxi/deepseek-sing-astrbot",
+    "https://github.com/leicanxi/astrbot_plugin_deepseek_sing",
 )
 class DeepSeekSingPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):

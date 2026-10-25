@@ -30,7 +30,7 @@ QQ ──► AstrBot（默认） ──► 本插件 ──HTTP──► sing-so
 - ****✅ Done****　beewith Bot 平台开发 · AstrBot 插件移植 · 自定义声音
   ****🚧 In Progress****　DSH 插件移植 · 可选伴奏混频 · 本地模型兼容 · 音色与算法优化
 
-  💬 **反馈**  Bug / 想法 / 建议 → 欢迎提 [Issue](https://github.com/leicanxi/deepseek-sing-astrbot/issues)
+  💬 **反馈**  Bug / 想法 / 建议 → 欢迎提 [Issue](https://github.com/leicanxi/astrbot_plugin_deepseek_sing/issues)
 
   📮 **联系**
   - 抖音（可以关注一下，我目标是打造一整套开箱即用的ai生态）　
@@ -50,7 +50,7 @@ QQ ──► AstrBot（默认） ──► 本插件 ──HTTP──► sing-so
 
    ```bash
    cd AstrBot/data/plugins
-   git clone https://github.com/leicanxi/deepseek-sing-astrbot.git astrbot_plugin_deepseek_sing
+   git clone https://github.com/leicanxi/astrbot_plugin_deepseek_sing.git astrbot_plugin_deepseek_sing
    ```
 
    在 AstrBot 网页后台启用插件（首次会自动安装依赖）。
