@@ -1,6 +1,6 @@
 name: astrbot_plugin_deepseek_sing
 display_name: DeepSeek 唱歌
 desc: 🎤 AI 唱歌插件：B站点歌 + RVC 翻唱。走 sing-song 网关，FlowBee 免部署按次计费，或自托管网关用你自己的 Replicate Token，音色白名单可自配。
-version: v0.1.0
+version: v0.2.0
 author: leicanxi
 repo: "https://github.com/leicanxi/deepseek-sing-astrbot"

@@ -3,72 +3,97 @@
     "description": "运行模式",
     "type": "string",
     "default": "flowbee",
-    "hint": "flowbee：免部署，走 FlowBee 按次计费（推荐）。self-hosted：需在服务器上运行 sing-gateway，用你自己的 Replicate Token，见 README。"
+    "hint": "flowbee：免部署，走 FlowBee 按次计费（推荐，没自建过 sing-gateway 就选这个）。self-hosted：需自己运行 sing-gateway，用你自己的 Replicate Token，见 README。"
   },
-  "flowbee_base_url": {
-    "description": "FlowBee API 地址",
-    "type": "string",
-    "default": "https://flowbee.top/v1",
-    "hint": "保持默认即可；自建 new-api 网关时改成你的网关 /v1 地址。"
+  "flowbee": {
+    "description": "FlowBee 模式（推荐，免部署按次计费）",
+    "type": "object",
+    "items": {
+      "flowbee_base_url": {
+        "description": "FlowBee API 地址",
+        "type": "string",
+        "default": "https://flowbee.top/v1",
+        "hint": "保持默认即可；自建 new-api 网关时改成你的网关 /v1 地址。"
+      },
+      "flowbee_api_key": {
+        "description": "FlowBee API Key",
+        "type": "string",
+        "default": "",
+        "secret": true,
+        "hint": "在 https://flowbee.top 获取，生成按次计费到你的 FlowBee 账户，免部署免服务器。"
+      }
+    }
   },
-  "flowbee_api_key": {
-    "description": "FlowBee API Key",
-    "type": "string",
-    "default": "",
-    "secret": true,
-    "hint": "推荐：免部署免服务器，在 https://flowbee.top 获取 API Key，生成按次计费到你的 FlowBee 账户。"
+  "selfhosted": {
+    "description": "自托管模式（自己部署 sing-gateway 才需要填）",
+    "type": "object",
+    "items": {
+      "gateway_base_url": {
+        "description": "网关地址",
+        "type": "string",
+        "default": "http://127.0.0.1:9001/v1",
+        "hint": "sing-gateway 的 /v1 地址，需与 AstrBot 网络可达。启动命令见 README。"
+      },
+      "gateway_token": {
+        "description": "网关令牌",
+        "type": "string",
+        "default": "",
+        "secret": true,
+        "hint": "即网关启动时设置的 SING_GATEWAY_TOKEN。REPLICATE_API_TOKEN 配在网关侧，不填在这里。"
+      },
+      "voices": {
+        "description": "音色白名单 JSON",
+        "type": "dict",
+        "default": {
+          "keine": "https://huggingface.co/leicanxi/rvc-models/resolve/main/keine_genso_flat.zip"
+        },
+        "hint": "格式：音色名 → RVC 模型 zip 公网地址。保存并重载插件后写入音色文件，网关即时生效；留空则不改动音色文件。安全须知见 README。",
+        "editor_mode": true,
+        "editor_language": "json"
+      },
+      "voices_file": {
+        "description": "音色文件路径",
+        "type": "string",
+        "default": "~/.octop/sing-voices.json",
+        "hint": "插件把上面的 JSON 同步到该文件，网关每次查询热读；需与网关的 SING_VOICES_FILE 一致。"
+      }
+    }
   },
-  "gateway_base_url": {
-    "description": "网关地址（仅 self-hosted 模式）",
-    "type": "string",
-    "default": "http://127.0.0.1:9001/v1",
-    "hint": "sing-gateway 的 /v1 地址，需与 AstrBot 网络可达。启动命令见 README。"
-  },
-  "gateway_token": {
-    "description": "网关令牌（仅 self-hosted 模式）",
-    "type": "string",
-    "default": "",
-    "secret": true,
-    "hint": "即网关启动时设置的 SING_GATEWAY_TOKEN。REPLICATE_API_TOKEN 配在网关侧，不填在这里。"
-  },
-  "voices": {
-    "description": "音色白名单 JSON（仅 self-hosted 模式）",
-    "type": "dict",
-    "default": {
-      "keine": "https://huggingface.co/leicanxi/rvc-models/resolve/main/keine_genso_flat.zip"
-    },
-    "hint": "格式：音色名 → RVC 模型 zip 公网地址。保存并重载插件后写入音色文件，网关即时生效；留空则不改动音色文件。安全须知见 README。",
-    "editor_mode": true,
-    "editor_language": "json"
-  },
-  "voices_file": {
-    "description": "音色文件路径（仅 self-hosted 模式）",
-    "type": "string",
-    "default": "~/.octop/sing-voices.json",
-    "hint": "插件把上面的 JSON 同步到该文件，网关每次查询热读；需与网关的 SING_VOICES_FILE 一致。"
-  },
-  "duration": {
-    "description": "片段长度（秒）",
-    "type": "int",
-    "default": 25,
-    "hint": "默认 25，范围 5~30。"
-  },
-  "start": {
-    "description": "截取起点（秒）",
-    "type": "int",
-    "default": 60,
-    "hint": "从歌曲第几秒开始截取，默认 60。"
-  },
-  "pitch": {
-    "description": "音高（半音）",
-    "type": "int",
-    "default": 2,
-    "hint": "整体升降调，默认 2。"
-  },
-  "pitch_mode": {
-    "description": "人声音域",
-    "type": "string",
-    "default": "no-change",
-    "hint": "no-change / male-to-female / female-to-male，默认 no-change。"
+  "singing": {
+    "description": "演唱默认参数（点歌时音色可按次覆盖）",
+    "type": "object",
+    "items": {
+      "voice": {
+        "description": "默认音色",
+        "type": "string",
+        "default": "",
+        "hint": "点歌时未指定音色就用这里填的音色名；发 /音色 查看当前可用列表。留空使用网关默认。想新增自定义音色：FlowBee 模式请联系管理员添加；自托管模式编辑自己的音色白名单即可。"
+      },
+      "duration": {
+        "description": "片段长度（秒）",
+        "type": "int",
+        "default": 25,
+        "hint": "默认 25，范围 5~30。"
+      },
+      "start": {
+        "description": "截取起点（秒）",
+        "type": "int",
+        "default": 60,
+        "hint": "从歌曲第几秒开始截取，默认 60。"
+      },
+      "pitch": {
+        "description": "音高（半音）",
+        "type": "int",
+        "default": 2,
+        "hint": "整体升降调，默认 2。"
+      },
+      "pitch_mode": {
+        "description": "人声音域",
+        "type": "string",
+        "default": "no-change",
+        "options": ["no-change", "male-to-female", "female-to-male"],
+        "hint": "默认 no-change。"
+      }
+    }
   }
 }

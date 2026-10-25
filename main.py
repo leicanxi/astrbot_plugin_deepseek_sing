@@ -33,9 +33,24 @@ VOICE_CACHE_TTL = 600.0  # seconds; /音色 always force-refreshes
 PITCH_MODES = ("no-change", "male-to-female", "female-to-male")
 FLOWBEE_KEY_URL = "https://flowbee.top"
 
+# Config keys grouped into cards in _conf_schema.json (nested dicts since v0.2.0).
+_CONFIG_GROUPS = {
+    "flowbee_base_url": "flowbee",
+    "flowbee_api_key": "flowbee",
+    "gateway_base_url": "selfhosted",
+    "gateway_token": "selfhosted",
+    "voices": "selfhosted",
+    "voices_file": "selfhosted",
+    "voice": "singing",
+    "duration": "singing",
+    "start": "singing",
+    "pitch": "singing",
+    "pitch_mode": "singing",
+}
+
 USAGE_HINT = (
     "用法：/点歌 歌名 [音色名]　·　/音色 查看可选音色　·　/点歌帮助\n"
-    "音色名可省略，省略时使用网关默认音色。"
+    "音色名可省略：未指定时使用插件配置的默认音色，未配置则用网关默认。"
 )
 
 
@@ -60,7 +75,7 @@ def _command_arg(event: AstrMessageEvent, command: str) -> str:
     "astrbot_plugin_deepseek_sing",
     "leicanxi",
     "AI 唱歌：B站点歌 + RVC 翻唱，走 sing-song 网关（FlowBee 免部署或自托管），音色白名单可自配",
-    "0.1.0",
+    "0.2.0",
     "https://github.com/leicanxi/deepseek-sing-astrbot",
 )
 class DeepSeekSingPlugin(Star):
@@ -69,9 +84,29 @@ class DeepSeekSingPlugin(Star):
         self.config = config
         self._voices_cache: list[dict[str, str]] = []
         self._voices_cache_at = 0.0
+        self._voice_checked = False
         self._sync_voices_file()
 
     # ---- configuration -----------------------------------------------------
+
+    def _get(self, key: str, default: Any = None) -> Any:
+        """Read the grouped (v0.2.0 nested) config first, then legacy flat keys.
+
+        Flattening the schema orphans values saved by older plugin versions;
+        falling back keeps pre-upgrade configs working until re-saved.
+        """
+        group = _CONFIG_GROUPS.get(key)
+        if group:
+            sub = self.config.get(group)
+            if isinstance(sub, dict):
+                value = sub.get(key)
+                if value not in (None, ""):
+                    return value
+        return self.config.get(key, default)
+
+    @property
+    def default_voice(self) -> str:
+        return str(self._get("voice") or "").strip()
 
     @property
     def mode(self) -> str:
@@ -80,12 +115,12 @@ class DeepSeekSingPlugin(Star):
     @property
     def base_url(self) -> str:
         key = "gateway_base_url" if self.mode == "self-hosted" else "flowbee_base_url"
-        return str(self.config.get(key) or "").strip().rstrip("/")
+        return str(self._get(key) or "").strip().rstrip("/")
 
     @property
     def api_key(self) -> str:
         key = "gateway_token" if self.mode == "self-hosted" else "flowbee_api_key"
-        return str(self.config.get(key) or "").strip()
+        return str(self._get(key) or "").strip()
 
     def _require_key(self) -> str:
         key = self.api_key
@@ -97,11 +132,11 @@ class DeepSeekSingPlugin(Star):
 
     def _gen_params(self) -> dict[str, Any]:
         params: dict[str, Any] = {
-            "duration": _clamp_int(self.config.get("duration"), 25, 5, 30),
-            "start": _clamp_int(self.config.get("start"), 60, 0, 3600),
-            "pitch": _clamp_int(self.config.get("pitch"), 2, -24, 24),
+            "duration": _clamp_int(self._get("duration"), 25, 5, 30),
+            "start": _clamp_int(self._get("start"), 60, 0, 3600),
+            "pitch": _clamp_int(self._get("pitch"), 2, -24, 24),
         }
-        pitch_mode = str(self.config.get("pitch_mode") or "no-change").strip()
+        pitch_mode = str(self._get("pitch_mode") or "no-change").strip()
         if pitch_mode in PITCH_MODES:
             params["pitch_mode"] = pitch_mode
         return params
@@ -193,7 +228,20 @@ class DeepSeekSingPlugin(Star):
         if voices:
             self._voices_cache = voices
             self._voices_cache_at = now
+            self._check_default_voice(voices)
         return voices or self._voices_cache
+
+    def _check_default_voice(self, voices: list[dict[str, str]]) -> None:
+        """Warn once when the configured default voice is not in the whitelist."""
+        if self._voice_checked:
+            return
+        self._voice_checked = True
+        configured = self.default_voice
+        if configured and not any(v["name"].casefold() == configured.casefold() for v in voices):
+            logger.warning(
+                "[deepseek-sing] 配置的默认音色 %r 不在当前白名单里，点歌将回退网关默认；发 /音色 查看可用列表",
+                configured,
+            )
 
     # ---- voices file sync (self-hosted) ------------------------------------
 
@@ -201,12 +249,12 @@ class DeepSeekSingPlugin(Star):
         """Write the configured voices JSON into the gateway voices file."""
         if self.mode != "self-hosted":
             return
-        raw = self.config.get("voices")
+        raw = self._get("voices")
         if not isinstance(raw, dict) or not raw:
             return
         text = json.dumps(raw, ensure_ascii=False, indent=2) + "\n"
         target = Path(
-            str(self.config.get("voices_file") or "~/.octop/sing-voices.json")
+            str(self._get("voices_file") or "~/.octop/sing-voices.json")
         ).expanduser()
         try:
             if target.exists() and target.read_text(encoding="utf-8") == text:
@@ -225,6 +273,7 @@ class DeepSeekSingPlugin(Star):
             payload["url"] = song
         else:
             payload["song"] = song
+        voice = (voice or "").strip() or self.default_voice
         if voice:
             payload["voice"] = voice
         block = await self._chat(SING_MODEL, payload)
@@ -309,12 +358,29 @@ class DeepSeekSingPlugin(Star):
                 event.plain_result(f"⚠️ 暂时拉不到音色列表，点歌将使用网关默认音色。\n{note}")
             )
             return
-        lines = [f"- {v['name']}" + (f"（{v['label']}）" if v["label"] != v["name"] else "") for v in voices]
+        lines = [
+            f"- {v['label']}（音色名：{v['name']}）" if v["label"] != v["name"] else f"- {v['name']}"
+            for v in voices
+        ]
+        configured = self.default_voice
+        head = (
+            f"🎵 可选音色（当前默认：{configured}）："
+            if configured
+            else "🎵 可选音色（未设置默认，将使用网关默认）："
+        )
+        custom = (
+            "自托管模式：编辑音色白名单（配置页「音色白名单 JSON」或网关音色文件）即可。"
+            if self.mode == "self-hosted"
+            else "FlowBee 模式为平台白名单制，想新增自定义音色请联系管理员。"
+        )
         await event.send(
             event.plain_result(
-                "🎵 可选音色（默认使用第一个）：\n"
+                head
+                + "\n"
                 + "\n".join(lines)
-                + "\n用法：/点歌 歌名 音色名"
+                + "\n用法：/点歌 歌名 音色名（音色名可省略，用默认）"
+                + "\n💡 想固定音色？在插件配置「演唱默认参数 → 音色」里填音色名，点歌就不用每次带上。"
+                + f"\n🎤 自定义音色：{custom}"
             )
         )
 
@@ -326,6 +392,7 @@ class DeepSeekSingPlugin(Star):
                 "🎤 DeepSeek 唱歌\n"
                 "/点歌 歌名 [音色名]　AI 唱歌（音色名可省略）\n"
                 "/音色　查看可选音色\n\n"
+                "音色省略时使用插件配置的默认音色，未配置则用网关默认；自定义音色需管理员添加，详见 /音色。\n"
                 "也可以直接对 LLM 说「唱一首《歌名》」，LLM 会自动调用工具。\n"
                 "生成按次计费或由你的 Replicate Token 承担，详见插件 README。"
             )
@@ -364,4 +431,7 @@ class DeepSeekSingPlugin(Star):
         if not voices:
             return "暂时拉不到音色列表，可让唱歌曲目使用默认音色。"
         names = ", ".join(v["name"] for v in voices)
-        return f"可选音色：{names}。选择时只传音色名；自定义音色需管理员在网关侧配置。"
+        return (
+            f"可选音色：{names}。用户未指定音色时插件会自动使用配置的默认音色；"
+            "选择时只传音色名，不能传自定义链接。"
+        )
