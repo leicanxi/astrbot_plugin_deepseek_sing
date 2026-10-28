@@ -5,8 +5,9 @@ Thin client only — every generation happens on an OpenAI-compatible
 the user's own key) or a self-hosted sing-gateway (own Replicate token, own
 voice whitelist file). No local audio stack is required.
 
-Voice lists are pulled from ``GET /v1/voices`` (direct gateway) or via the
-free ``sing-voices`` chat model when relayed behind new-api.
+Voice names are not enumerable: users pick names on the voice plaza
+(``/音色`` shows the link) and pass them to ``/点歌`` or the LLM tools; the
+gateway validates them.
 """
 
 from __future__ import annotations
@@ -27,11 +28,10 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.message.components import File, Record
 
 SING_MODEL = "sing-song"
-VOICES_MODEL = "sing-voices"
 REQUEST_TIMEOUT = 360.0  # cold starts can take 2-4 minutes
-VOICE_CACHE_TTL = 600.0  # seconds; /音色 always force-refreshes
 PITCH_MODES = ("no-change", "male-to-female", "female-to-male")
 FLOWBEE_KEY_URL = "https://flowbee.top"
+PLAZA_URL = "https://voice-models.flowbee.top"
 
 # Config keys grouped into cards in _conf_schema.json (nested dicts since v0.2.0).
 _CONFIG_GROUPS = {
@@ -49,7 +49,7 @@ _CONFIG_GROUPS = {
 }
 
 USAGE_HINT = (
-    "用法：/点歌 歌名 [音色名]　·　/音色 查看可选音色　·　/点歌帮助\n"
+    "用法：/点歌 歌名 [音色名]　·　/音色 音色广场　·　/点歌帮助\n"
     "音色名可省略：未指定时使用插件配置的默认音色，未配置则用网关默认。"
 )
 
@@ -82,9 +82,6 @@ class DeepSeekSingPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        self._voices_cache: list[dict[str, str]] = []
-        self._voices_cache_at = 0.0
-        self._voice_checked = False
         self._sync_voices_file()
 
     # ---- configuration -----------------------------------------------------
@@ -132,7 +129,7 @@ class DeepSeekSingPlugin(Star):
 
     def _gen_params(self) -> dict[str, Any]:
         params: dict[str, Any] = {
-            "duration": _clamp_int(self._get("duration"), 25, 5, 30),
+            "duration": _clamp_int(self._get("duration"), 25, 5, 60),
             "start": _clamp_int(self._get("start"), 60, 0, 3600),
             "pitch": _clamp_int(self._get("pitch"), 2, -24, 24),
         }
@@ -190,58 +187,6 @@ class DeepSeekSingPlugin(Star):
             if detail:
                 return str(detail)[:300]
         return response.text[:300]
-
-    async def _fetch_voices(self, *, force: bool = False) -> list[dict[str, str]]:
-        """Return the whitelist: direct GET first, then the sing-voices model."""
-        now = time.monotonic()
-        if not force and self._voices_cache and now - self._voices_cache_at < VOICE_CACHE_TTL:
-            return self._voices_cache
-        voices: list[dict[str, str]] = []
-        # Tier 1: GET /v1/voices — works against a directly reachable gateway.
-        try:
-            key = self._require_key()
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.get(
-                    f"{self.base_url}/voices",
-                    headers={"Authorization": f"Bearer {key}"},
-                )
-            if response.status_code == 200:
-                for item in response.json().get("data") or []:
-                    name = str(item.get("id") or "").strip()
-                    if name:
-                        voices.append({"name": name, "label": str(item.get("label") or name)})
-        except Exception:
-            logger.debug("[deepseek-sing] GET /voices failed", exc_info=True)
-        # Tier 2: POST model=sing-voices — works behind new-api relays.
-        if not voices:
-            try:
-                block = await self._chat(VOICES_MODEL, {})
-                if block.get("type") == "voices":
-                    for item in block.get("voices") or []:
-                        name = str(item.get("name") or "").strip()
-                        if name:
-                            voices.append(
-                                {"name": name, "label": str(item.get("label") or name)}
-                            )
-            except Exception as exc:
-                logger.debug("[deepseek-sing] sing-voices pull failed: %s", exc)
-        if voices:
-            self._voices_cache = voices
-            self._voices_cache_at = now
-            self._check_default_voice(voices)
-        return voices or self._voices_cache
-
-    def _check_default_voice(self, voices: list[dict[str, str]]) -> None:
-        """Warn once when the configured default voice is not in the whitelist."""
-        if self._voice_checked:
-            return
-        self._voice_checked = True
-        configured = self.default_voice
-        if configured and not any(v["name"].casefold() == configured.casefold() for v in voices):
-            logger.warning(
-                "[deepseek-sing] 配置的默认音色 %r 不在当前白名单里，点歌将回退网关默认；发 /音色 查看可用列表",
-                configured,
-            )
 
     # ---- voices file sync (self-hosted) ------------------------------------
 
@@ -327,16 +272,20 @@ class DeepSeekSingPlugin(Star):
             await event.send(event.plain_result(USAGE_HINT))
             return
         self._sync_voices_file()
-        voices = await self._fetch_voices()
+        # 音色名不再可枚举，由网关校验：末尾词先按音色尝试，网关报 unknown voice
+        # 时回退为整串歌名重新搜索。
         song, voice = args, ""
         parts = args.rsplit(maxsplit=1)
         if len(parts) == 2:
-            tail = parts[1].strip().casefold()
-            if any(v["name"].casefold() == tail for v in voices):
-                song, voice = parts[0].strip(), tail
+            song, voice = parts[0].strip(), parts[1].strip().casefold()
         await event.send(event.plain_result("🎤 正在生成，请稍候（冷启动最长约 4 分钟）..."))
         try:
-            block = await self._sing(song, voice)
+            try:
+                block = await self._sing(song, voice)
+            except Exception as exc:
+                if not voice or "unknown voice" not in str(exc):
+                    raise
+                block = await self._sing(args, "")
         except Exception as exc:
             logger.warning("[deepseek-sing] 点歌失败：%s", exc)
             await event.send(event.plain_result(f"❌ 点歌失败：{exc}"))
@@ -345,40 +294,22 @@ class DeepSeekSingPlugin(Star):
 
     @filter.command("音色")
     async def list_voices(self, event: AstrMessageEvent):
-        """列出可选音色：/音色"""
-        self._sync_voices_file()
-        voices = await self._fetch_voices(force=True)
-        if not voices:
-            note = (
-                "自托管模式：请检查网关地址与令牌是否正确。"
-                if self.mode == "self-hosted"
-                else f"FlowBee 模式：请检查 API Key（{FLOWBEE_KEY_URL}）。"
-            )
-            await event.send(
-                event.plain_result(f"⚠️ 暂时拉不到音色列表，点歌将使用网关默认音色。\n{note}")
-            )
-            return
-        lines = [
-            f"- {v['label']}（音色名：{v['name']}）" if v["label"] != v["name"] else f"- {v['name']}"
-            for v in voices
-        ]
+        """音色广场指引：/音色"""
         configured = self.default_voice
         head = (
-            f"🎵 可选音色（当前默认：{configured}）："
-            if configured
-            else "🎵 可选音色（未设置默认，将使用网关默认）："
+            f"🎵 音色广场：{PLAZA_URL}\n"
+            "在广场挑好音色后：/点歌 歌名 音色名（音色名可省略，用默认）"
         )
+        if configured:
+            head += f"\n当前默认音色：{configured}（/点歌 不带音色名时使用）"
         custom = (
             "自托管模式：编辑音色白名单（配置页「音色白名单 JSON」或网关音色文件）即可。"
             if self.mode == "self-hosted"
-            else "FlowBee 模式为平台白名单制，想新增自定义音色请联系管理员。"
+            else "想新增自定义音色请联系管理员加入白名单。"
         )
         await event.send(
             event.plain_result(
                 head
-                + "\n"
-                + "\n".join(lines)
-                + "\n用法：/点歌 歌名 音色名（音色名可省略，用默认）"
                 + "\n💡 想固定音色？在插件配置「演唱默认参数 → 音色」里填音色名，点歌就不用每次带上。"
                 + f"\n🎤 自定义音色：{custom}"
             )
@@ -391,7 +322,7 @@ class DeepSeekSingPlugin(Star):
             event.plain_result(
                 "🎤 DeepSeek 唱歌\n"
                 "/点歌 歌名 [音色名]　AI 唱歌（音色名可省略）\n"
-                "/音色　查看可选音色\n\n"
+                "/音色　音色广场链接\n\n"
                 "音色省略时使用插件配置的默认音色，未配置则用网关默认；自定义音色需管理员添加，详见 /音色。\n"
                 "也可以直接对 LLM 说「唱一首《歌名》」，LLM 会自动调用工具。\n"
                 "生成按次计费或由你的 Replicate Token 承担，详见插件 README。"
@@ -406,7 +337,7 @@ class DeepSeekSingPlugin(Star):
 
         Args:
             song(string): 歌曲名；用户明确确认过的 B 站歌曲链接也可以直接传。
-            voice(string, optional): 音色名（白名单内），可先调用 list_sing_voices 查看。
+            voice(string, optional): 音色名（用户在音色广场挑好的名字），可先调用 list_sing_voices 获取广场链接。
         Returns:
             成功时返回"已发送"，失败时返回错误信息。
         '''
@@ -422,16 +353,13 @@ class DeepSeekSingPlugin(Star):
 
     @filter.llm_tool(name="list_sing_voices")
     async def list_voices_tool(self, event: AstrMessageEvent) -> str:
-        '''列出当前可选的唱歌音色及使用说明。
+        """返回音色广场链接与音色使用说明。
 
         Returns:
-            音色名列表；选择音色时只传音色名，不能传自定义链接。
-        '''
-        voices = await self._fetch_voices()
-        if not voices:
-            return "暂时拉不到音色列表，可让唱歌曲目使用默认音色。"
-        names = ", ".join(v["name"] for v in voices)
+            音色广场地址；用户在广场挑好音色名后，调用 sing_song 时传 voice=音色名。
+        """
         return (
-            f"可选音色：{names}。用户未指定音色时插件会自动使用配置的默认音色；"
-            "选择时只传音色名，不能传自定义链接。"
+            f"音色目录已迁移到音色广场：{PLAZA_URL}。请指引：用户在广场挑好音色后，"
+            "点歌时把音色名传给 voice；未指定音色时自动使用配置的默认音色。"
+            "不能传自定义链接，自定义音色需管理员加入白名单。"
         )
