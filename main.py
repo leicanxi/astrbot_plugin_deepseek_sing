@@ -307,7 +307,7 @@ class DeepSeekSingPlugin(Star):
         custom = (
             "自托管模式：编辑音色白名单（配置页「音色白名单 JSON」或网关音色文件）即可。"
             if self.mode == "self-hosted"
-            else "想新增自定义音色请联系管理员加入白名单。"
+            else f"到 {PLAZA_URL} 的「上传音色」页自助提交（自动审核），通过后会得到专属音色名。"
         )
         await event.send(
             event.plain_result(
@@ -325,7 +325,7 @@ class DeepSeekSingPlugin(Star):
                 "🎤 DeepSeek 唱歌\n"
                 "/点歌 歌名 [音色名]　AI 唱歌（音色名可省略）\n"
                 "/音色　音色广场链接\n\n"
-                "音色省略时使用插件配置的默认音色，未配置则用网关默认；自定义音色需管理员添加，详见 /音色。\n"
+                "音色省略时使用插件配置的默认音色，未配置则用网关默认；自有音色可在音色广场「上传音色」页自助提交（自动审核），详见 /音色。\n"
                 "也可以直接对 LLM 说「唱一首《歌名》」，LLM 会自动调用工具。\n"
                 "生成按次计费或由你的 Replicate Token 承担，详见插件 README。"
             )
