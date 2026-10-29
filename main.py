@@ -300,6 +300,8 @@ class DeepSeekSingPlugin(Star):
             f"🎵 音色广场：{PLAZA_URL}\n"
             "在广场挑好音色后：/点歌 歌名 音色名（音色名可省略，用默认）"
         )
+        if self.mode != "self-hosted":
+            head += "\n有自己的音色模型？在广场页「上传音色」提交 zip 或链接，自动审核通过后即可使用。"
         if configured:
             head += f"\n当前默认音色：{configured}（/点歌 不带音色名时使用）"
         custom = (
@@ -361,5 +363,6 @@ class DeepSeekSingPlugin(Star):
         return (
             f"音色目录已迁移到音色广场：{PLAZA_URL}。请指引：用户在广场挑好音色后，"
             "点歌时把音色名传给 voice；未指定音色时自动使用配置的默认音色。"
-            "不能传自定义链接，自定义音色需管理员加入白名单。"
+            "用户有自己的 RVC 模型时，到广场页「上传音色」提交 zip 或模型直链，"
+            "自动审核通过后会得到专属音色名。点歌时不能传自定义链接。"
         )
