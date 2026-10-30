@@ -24,7 +24,7 @@ import httpx
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.message.components import File, Record
 
@@ -34,6 +34,12 @@ REQUEST_TIMEOUT = 960.0
 PITCH_MODES = ("no-change", "male-to-female", "female-to-male")
 FLOWBEE_KEY_URL = "https://flowbee.top"
 PLAZA_URL = "https://voice-models.flowbee.top"
+PLUGIN_NAME = "astrbot_plugin_deepseek_sing"
+
+# Optional usage limits: a rolling 24h window, so quota frees up gradually
+# instead of resetting at midnight.
+LIMIT_WINDOW_SECONDS = 24 * 3600
+_RESERVED_EXTRA = "deepseek_sing_quota_reserved"
 
 # Config keys grouped into cards in _conf_schema.json (nested dicts since v0.2.0).
 _CONFIG_GROUPS = {
@@ -48,6 +54,10 @@ _CONFIG_GROUPS = {
     "start": "singing",
     "pitch": "singing",
     "pitch_mode": "singing",
+    "daily_per_user": "limits",
+    "daily_per_group": "limits",
+    "cooldown_seconds": "limits",
+    "daily_total": "limits",
 }
 
 USAGE_HINT = (
@@ -62,6 +72,27 @@ def _clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+def _limit_value(value: Any, default: int = -1) -> int:
+    """Read a usage limit; any negative value means unlimited."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _timestamps(value: Any) -> list[float]:
+    """Keep only usable numbers so a hand-edited ledger cannot break a decision."""
+    if not isinstance(value, list):
+        return []
+    return [float(entry) for entry in value if isinstance(entry, (int, float))]
+
+
+def _entity_map(value: Any) -> dict[str, list[float]]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): _timestamps(entries) for key, entries in value.items()}
 
 
 def _command_arg(event: AstrMessageEvent, command: str) -> str:
@@ -84,11 +115,112 @@ def _describe_error(exc: BaseException) -> str:
     return f"网关请求中断（{name}），请稍后重试"
 
 
+class _UsageLog:
+    """Rolling 24h ledger of generations, keyed by user / group / whole instance.
+
+    Volume here is tens of rows a day, so it stays a JSON file rather than a
+    database: expired timestamps are pruned on every decision and the file is
+    rewritten when a slot is taken. Persistence is best-effort — a failed write
+    only warns, because a broken ledger must never take singing down with it.
+    """
+
+    def __init__(self, path: Path | None) -> None:
+        self.path = path
+        self.lock = asyncio.Lock()
+        self.users: dict[str, list[float]] = {}
+        self.groups: dict[str, list[float]] = {}
+        self.total: list[float] = []
+        if path is not None:
+            self._load()
+
+    def _load(self) -> None:
+        if self.path is None:
+            return
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError):
+            logger.warning(f"[deepseek-sing] 用量账本读取失败，从空账本开始：{self.path}", exc_info=True)
+            return
+        if not isinstance(raw, dict):
+            return
+        self.users = _entity_map(raw.get("users"))
+        self.groups = _entity_map(raw.get("groups"))
+        self.total = _timestamps(raw.get("total"))
+
+    def _save(self) -> None:
+        if self.path is None:
+            return
+        payload = {"users": self.users, "groups": self.groups, "total": self.total}
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self.path)
+        except OSError:
+            logger.warning(f"[deepseek-sing] 用量账本写入失败，限制仅在内存生效：{self.path}", exc_info=True)
+
+    def _prune(self, now: float) -> None:
+        cutoff = now - LIMIT_WINDOW_SECONDS
+        for bucket in (self.users, self.groups):
+            for key in list(bucket):
+                kept = [ts for ts in bucket[key] if ts > cutoff]
+                if kept:
+                    bucket[key] = kept
+                else:
+                    del bucket[key]
+        self.total = [ts for ts in self.total if ts > cutoff]
+
+    async def consume(
+        self,
+        *,
+        user_key: str,
+        group_key: str,
+        per_user: int,
+        per_group: int,
+        per_total: int,
+        cooldown: int,
+    ) -> str | None:
+        """Book one generation; returns the text to show the user when blocked."""
+        now = time.time()
+        async with self.lock:
+            self._prune(now)
+            user_used = self.users.get(user_key, [])
+            if cooldown >= 0 and user_used and now - user_used[-1] < cooldown:
+                wait = max(1, int(cooldown - (now - user_used[-1])))
+                return f"⏱️ 点歌太快啦，请 {wait} 秒后再试。"
+            if 0 <= per_user <= len(user_used):
+                return f"🚫 你最近 24 小时点歌已达上限（{per_user} 首），稍后再来～"
+            if 0 <= per_group <= len(self.groups.get(group_key, [])):
+                return f"🚫 本群最近 24 小时点歌已达上限（{per_group} 首），稍后再来～"
+            if 0 <= per_total <= len(self.total):
+                return "🚫 机器人最近 24 小时的点歌额度已用完，稍后再来。"
+            self.users.setdefault(user_key, []).append(now)
+            self.groups.setdefault(group_key, []).append(now)
+            self.total.append(now)
+            self._save()
+        return None
+
+    async def release(self, *, user_key: str, group_key: str) -> None:
+        """Return a booked slot after a failed generation."""
+        async with self.lock:
+            for bucket, key in ((self.users, user_key), (self.groups, group_key)):
+                entries = bucket.get(key)
+                if entries:
+                    entries.pop()
+                    if not entries:
+                        del bucket[key]
+            if self.total:
+                self.total.pop()
+            self._save()
+
+
 @register(
-    "astrbot_plugin_deepseek_sing",
+    PLUGIN_NAME,
     "leicanxi",
     "AI 唱歌：B站点歌 + RVC 翻唱，走 sing-song 网关（FlowBee 免部署或自托管），音色白名单可自配",
-    "0.2.0",
+    "0.3.0",
     "https://github.com/leicanxi/astrbot_plugin_deepseek_sing",
 )
 class DeepSeekSingPlugin(Star):
@@ -96,7 +228,16 @@ class DeepSeekSingPlugin(Star):
         super().__init__(context)
         self.config = config
         self._bg_tasks: set[asyncio.Task[None]] = set()
+        self._usage = _UsageLog(self._usage_path())
         self._sync_voices_file()
+
+    def _usage_path(self) -> Path | None:
+        """Ledger location inside the plugin data dir; None keeps accounting in memory only."""
+        try:
+            return Path(StarTools.get_data_dir(PLUGIN_NAME)) / "usage.json"
+        except (OSError, RuntimeError, ValueError):
+            logger.warning("[deepseek-sing] 无法定位插件数据目录，使用限制仅在内存生效", exc_info=True)
+            return None
 
     # ---- configuration -----------------------------------------------------
 
@@ -151,6 +292,54 @@ class DeepSeekSingPlugin(Star):
         if pitch_mode in PITCH_MODES:
             params["pitch_mode"] = pitch_mode
         return params
+
+    # ---- optional usage limits ----------------------------------------------
+
+    @staticmethod
+    def _entity_keys(event: AstrMessageEvent) -> tuple[str, str]:
+        """(user, group) ledger keys.
+
+        Private chats have no group id; scoping their group quota to ``dm:<user>``
+        keeps unrelated DMs from sharing a single pool.
+        """
+        user_key = event.get_sender_id() or event.unified_msg_origin
+        group_key = event.get_group_id() or f"dm:{user_key}"
+        return user_key, group_key
+
+    async def _enforce_limits(self, event: AstrMessageEvent) -> str | None:
+        """Book one generation against the configured limits.
+
+        Returns the text to answer with when the caller must not generate. Admins
+        are exempt and consume nothing.
+        """
+        per_user = _limit_value(self._get("daily_per_user"))
+        per_group = _limit_value(self._get("daily_per_group"))
+        per_total = _limit_value(self._get("daily_total"))
+        cooldown = _limit_value(self._get("cooldown_seconds"))
+        if per_user < 0 and per_group < 0 and per_total < 0 and cooldown < 0:
+            return None
+        if event.is_admin():
+            return None
+        user_key, group_key = self._entity_keys(event)
+        refusal = await self._usage.consume(
+            user_key=user_key,
+            group_key=group_key,
+            per_user=per_user,
+            per_group=per_group,
+            per_total=per_total,
+            cooldown=cooldown,
+        )
+        if refusal is None:
+            event.set_extra(_RESERVED_EXTRA, True)
+        return refusal
+
+    async def _refund_limits(self, event: AstrMessageEvent) -> None:
+        """Hand back the booked slot after a failed generation — nothing was billed."""
+        if not event.get_extra(_RESERVED_EXTRA):
+            return
+        event.set_extra(_RESERVED_EXTRA, False)
+        user_key, group_key = self._entity_keys(event)
+        await self._usage.release(user_key=user_key, group_key=group_key)
 
     # ---- gateway client ----------------------------------------------------
 
@@ -320,6 +509,7 @@ class DeepSeekSingPlugin(Star):
                 exc,
                 exc_info=True,
             )
+            await self._refund_limits(event)
             await self._send_text(event, f"❌ 点歌失败：{_describe_error(exc)}")
             return
         await self._send_audio(event, str(block["source"]["url"]))
@@ -346,6 +536,10 @@ class DeepSeekSingPlugin(Star):
         parts = args.rsplit(maxsplit=1)
         if len(parts) == 2:
             song, voice = parts[0].strip(), parts[1].strip().casefold()
+        refusal = await self._enforce_limits(event)
+        if refusal:
+            await event.send(event.plain_result(refusal))
+            return
         await event.send(event.plain_result("🎤 正在生成，请稍候（冷启动最长约 4 分钟）..."))
         self._start_generation(event, song, voice, fallback_song=args)
 
@@ -404,6 +598,9 @@ class DeepSeekSingPlugin(Star):
         song = (song or "").strip()
         if not song:
             return "点歌失败：缺少歌曲名"
+        refusal = await self._enforce_limits(event)
+        if refusal:
+            return refusal
         # Return immediately: generation takes minutes and AstrBot caps tool calls
         # (tool_call_timeout, 60-120s by default). The audio is pushed when ready.
         self._start_generation(event, song, (voice or "").strip())

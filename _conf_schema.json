@@ -95,5 +95,35 @@
         "hint": "默认 no-change。"
       }
     }
+  },
+  "limits": {
+    "description": "使用限制（可选：限制群友点歌次数，管理员不受限，默认全部不限）",
+    "type": "object",
+    "items": {
+      "daily_per_user": {
+        "description": "每人每 24 小时次数",
+        "type": "int",
+        "default": -1,
+        "hint": "-1 表示不限。按「最近 24 小时」滚动统计，额度随时间逐条恢复；私聊与群内分别计算。"
+      },
+      "daily_per_group": {
+        "description": "每群每 24 小时次数",
+        "type": "int",
+        "default": -1,
+        "hint": "-1 表示不限。整群成员共享这一份额度（私聊按人单独计算）。"
+      },
+      "cooldown_seconds": {
+        "description": "同一人点歌间隔（秒）",
+        "type": "int",
+        "default": -1,
+        "hint": "-1 表示不限。用于防止连点。"
+      },
+      "daily_total": {
+        "description": "全机器人每 24 小时总次数",
+        "type": "int",
+        "default": -1,
+        "hint": "-1 表示不限。所有群与私聊合计，用于兜住你的成本上限。"
+      }
+    }
   }
 }
