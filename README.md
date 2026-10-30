@@ -96,11 +96,11 @@ Replicate 是一家美国的开源 AI 模型托管云平台，面向开发者，
    export SING_GATEWAY_TOKEN='choose-a-long-random-secret'
    export REPLICATE_API_TOKEN='r8_...'
    export SING_MUSIC_SOURCE=netease   # 可选：海外服务器建议（B站对机房 IP 有 412 风控）；默认 bilibili
-   export SING_NCM_API=http://127.0.0.1:3010   # 可选：搭配 ncm-api sidecar 解锁 VIP 曲库，见 sing-gateway.md
+   export SING_NCM_API=http://127.0.0.1:3010   # 可选：搭配 ncm-api sidecar 解锁 VIP 曲库，见 sing-gateway 仓库
    octop-sing-gateway --host 127.0.0.1 --port 9001
    ```
 
-   Docker 网络、systemd、开机自启等部署细节见 [docs/sing-gateway.md](https://github.com/leicanxi/Octop/blob/main/docs/sing-gateway.md)。
+   Docker 网络、systemd、开机自启等部署细节见 [sing-gateway](https://github.com/leicanxi/sing-gateway)（网关已独立成项目：`pip install sing-gateway`，systemd 单元在 `deploy/`）。
 
 3. 插件配置页切换模式并填写：
 
