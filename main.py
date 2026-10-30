@@ -12,6 +12,7 @@ gateway validates them.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import time
@@ -28,7 +29,8 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.message.components import File, Record
 
 SING_MODEL = "sing-song"
-REQUEST_TIMEOUT = 360.0  # cold starts can take 2-4 minutes
+# Cold starts can take 2-4 minutes; the upstream relay itself allows ~15 minutes.
+REQUEST_TIMEOUT = 960.0
 PITCH_MODES = ("no-change", "male-to-female", "female-to-male")
 FLOWBEE_KEY_URL = "https://flowbee.top"
 PLAZA_URL = "https://voice-models.flowbee.top"
@@ -71,6 +73,17 @@ def _command_arg(event: AstrMessageEvent, command: str) -> str:
     return text
 
 
+def _describe_error(exc: BaseException) -> str:
+    """Readable failure text; httpx timeouts stringify to an empty string."""
+    text = str(exc).strip()
+    if text:
+        return text
+    name = type(exc).__name__
+    if "Timeout" in name:
+        return f"网关在 {int(REQUEST_TIMEOUT)} 秒内没有返回结果，请稍后重试"
+    return f"网关请求中断（{name}），请稍后重试"
+
+
 @register(
     "astrbot_plugin_deepseek_sing",
     "leicanxi",
@@ -82,6 +95,7 @@ class DeepSeekSingPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        self._bg_tasks: set[asyncio.Task[None]] = set()
         self._sync_voices_file()
 
     # ---- configuration -----------------------------------------------------
@@ -262,6 +276,60 @@ class DeepSeekSingPlugin(Star):
                 except OSError:
                     pass
 
+    # ---- generation tasks ---------------------------------------------------
+
+    def _start_generation(
+        self,
+        event: AstrMessageEvent,
+        song: str,
+        voice: str,
+        *,
+        fallback_song: str | None = None,
+    ) -> None:
+        """Run one generation in the background so no tool/command timeout applies."""
+        task = asyncio.create_task(
+            self._generate_and_send(
+                event,
+                song,
+                voice,
+                fallback_song=song if fallback_song is None else fallback_song,
+            )
+        )
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    async def _generate_and_send(
+        self,
+        event: AstrMessageEvent,
+        song: str,
+        voice: str,
+        *,
+        fallback_song: str,
+    ) -> None:
+        try:
+            try:
+                block = await self._sing(song, voice)
+            except Exception as exc:
+                if not voice or "unknown voice" not in str(exc):
+                    raise
+                block = await self._sing(fallback_song, "")
+        except Exception as exc:
+            logger.warning(
+                "[deepseek-sing] 点歌失败：%s: %r",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
+            await self._send_text(event, f"❌ 点歌失败：{_describe_error(exc)}")
+            return
+        await self._send_audio(event, str(block["source"]["url"]))
+
+    async def _send_text(self, event: AstrMessageEvent, text: str) -> None:
+        try:
+            await event.send(event.plain_result(text))
+        except Exception:
+            logger.warning("[deepseek-sing] 失败提示发送失败", exc_info=True)
+
     # ---- commands -----------------------------------------------------------
 
     @filter.command("点歌")
@@ -279,18 +347,7 @@ class DeepSeekSingPlugin(Star):
         if len(parts) == 2:
             song, voice = parts[0].strip(), parts[1].strip().casefold()
         await event.send(event.plain_result("🎤 正在生成，请稍候（冷启动最长约 4 分钟）..."))
-        try:
-            try:
-                block = await self._sing(song, voice)
-            except Exception as exc:
-                if not voice or "unknown voice" not in str(exc):
-                    raise
-                block = await self._sing(args, "")
-        except Exception as exc:
-            logger.warning("[deepseek-sing] 点歌失败：%s", exc)
-            await event.send(event.plain_result(f"❌ 点歌失败：{exc}"))
-            return
-        await self._send_audio(event, str(block["source"]["url"]))
+        self._start_generation(event, song, voice, fallback_song=args)
 
     @filter.command("音色")
     async def list_voices(self, event: AstrMessageEvent):
@@ -301,13 +358,13 @@ class DeepSeekSingPlugin(Star):
             "在广场挑好音色后：/点歌 歌名 音色名（音色名可省略，用默认）"
         )
         if self.mode != "self-hosted":
-            head += "\n有自己的音色模型？在广场页「上传音色」提交 zip 或链接，自动审核通过后即可使用。"
+            head += "\n有自己的音色模型？登录后在广场页「上传音色」提交 zip 或链接，自动审核通过后即可使用。"
         if configured:
             head += f"\n当前默认音色：{configured}（/点歌 不带音色名时使用）"
         custom = (
             "自托管模式：编辑音色白名单（配置页「音色白名单 JSON」或网关音色文件）即可。"
             if self.mode == "self-hosted"
-            else f"到 {PLAZA_URL} 的「上传音色」页自助提交（自动审核），通过后会得到专属音色名。"
+            else f"登录 {PLAZA_URL} 后到「上传音色」页自助提交（自动审核），通过后会得到专属音色名。"
         )
         await event.send(
             event.plain_result(
@@ -325,7 +382,7 @@ class DeepSeekSingPlugin(Star):
                 "🎤 DeepSeek 唱歌\n"
                 "/点歌 歌名 [音色名]　AI 唱歌（音色名可省略）\n"
                 "/音色　音色广场链接\n\n"
-                "音色省略时使用插件配置的默认音色，未配置则用网关默认；自有音色可在音色广场「上传音色」页自助提交（自动审核），详见 /音色。\n"
+                "音色省略时使用插件配置的默认音色，未配置则用网关默认；自有音色可登录音色广场后在「上传音色」页自助提交（自动审核），详见 /音色。\n"
                 "也可以直接对 LLM 说「唱一首《歌名》」，LLM 会自动调用工具。\n"
                 "生成按次计费或由你的 Replicate Token 承担，详见插件 README。"
             )
@@ -341,17 +398,16 @@ class DeepSeekSingPlugin(Star):
             song(string): 歌曲名；用户明确确认过的 B 站歌曲链接也可以直接传。
             voice(string, optional): 音色名（用户在音色广场挑好的名字），可先调用 list_sing_voices 获取广场链接。
         Returns:
-            成功时返回"已发送"，失败时返回错误信息。
+            已受理提示；音频生成完成后会主动发送到当前会话。失败时以消息形式告知。
         '''
         self._sync_voices_file()
-        try:
-            block = await self._sing((song or "").strip(), (voice or "").strip())
-        except Exception as exc:
-            logger.warning("[deepseek-sing] LLM 工具点歌失败：%s", exc)
-            return f"点歌失败：{exc}"
-        url = str(block["source"]["url"])
-        await self._send_audio(event, url)
-        return f"已生成并发送：{url}"
+        song = (song or "").strip()
+        if not song:
+            return "点歌失败：缺少歌曲名"
+        # Return immediately: generation takes minutes and AstrBot caps tool calls
+        # (tool_call_timeout, 60-120s by default). The audio is pushed when ready.
+        self._start_generation(event, song, (voice or "").strip())
+        return "已提交生成，完成后会直接把音频发到当前会话，请稍候。"
 
     @filter.llm_tool(name="list_sing_voices")
     async def list_voices_tool(self, event: AstrMessageEvent) -> str:
@@ -363,6 +419,6 @@ class DeepSeekSingPlugin(Star):
         return (
             f"音色目录已迁移到音色广场：{PLAZA_URL}。请指引：用户在广场挑好音色后，"
             "点歌时把音色名传给 voice；未指定音色时自动使用配置的默认音色。"
-            "用户有自己的 RVC 模型时，到广场页「上传音色」提交 zip 或模型直链，"
-            "自动审核通过后会得到专属音色名。点歌时不能传自定义链接。"
+            "用户有自己的 RVC 模型时，登录后在广场页「上传音色」提交 zip 或模型直链，"
+            "自动审核通过后会得到专属音色名，也可在「我的音色」里管理。点歌时不能传自定义链接。"
         )
