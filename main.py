@@ -35,11 +35,11 @@ SEARCH_MODEL = "sing-search"
 REQUEST_TIMEOUT = 960.0
 PITCH_MODES = ("no-change", "male-to-female", "female-to-male")
 # Mixing gains in dB: 0 keeps a stem (accompaniment / backing harmonies), -60
-# mutes it. The gateway clamps to the same range.
+# mutes it, +12 is the loudest we expose. The gateway clamps to the same range.
 VOLUME_MIN = -60
-VOLUME_MAX = 0
-# Trailing "/点歌 ... 伴奏[-dB]" token that turns the accompaniment on.
-_MIX_TOKEN_RE = re.compile(r"\s+((?:带)?伴奏(-?\d+)?)\s*$")
+VOLUME_MAX = 12
+# Trailing "/点歌 ... 伴奏[±dB]" token that turns the accompaniment on.
+_MIX_TOKEN_RE = re.compile(r"\s+((?:带)?伴奏([+-]?\d+)?)\s*$")
 FLOWBEE_KEY_URL = "https://flowbee.top"
 PLAZA_URL = "https://voice-models.flowbee.top"
 PLUGIN_NAME = "astrbot_plugin_deepseek_sing"
@@ -77,7 +77,7 @@ _CONFIG_GROUPS = {
 }
 
 USAGE_HINT = (
-    "用法：/点歌 歌名 [音色名] [伴奏[-dB]]　·　/音色 音色广场　·　/点歌帮助\n"
+    "用法：/点歌 歌名 [音色名] [伴奏[±dB]]　·　/音色 音色广场　·　/点歌帮助\n"
     "音色名可省略：未指定时使用插件配置的默认音色，未配置则用网关默认。"
 )
 
@@ -681,8 +681,8 @@ class DeepSeekSingPlugin(Star):
             return
         self._sync_voices_file()
         # 音色名不再可枚举，由网关校验：末尾词先按音色尝试，网关报 unknown voice
-        # 时回退为整串歌名重新搜索。结尾的「伴奏[-dB]」token 先消费掉，表示
-        # 本次带伴奏（0 原始音量，-6 轻一些）。
+        # 时回退为整串歌名重新搜索。结尾的「伴奏[±dB]」token 先消费掉，表示
+        # 本次带伴奏（0 原始音量，-6 更轻，+6 更响）。
         text = args
         mix: dict[str, int] = {}
         trailing = _MIX_TOKEN_RE.search(text)
@@ -734,7 +734,7 @@ class DeepSeekSingPlugin(Star):
             event.plain_result(
                 "🎤 DeepSeek 唱歌\n"
                 "/点歌 歌名 [音色名]　AI 唱歌（音色名可省略）\n"
-                "/点歌 歌名 伴奏[-dB]　带伴奏翻唱，如 /点歌 晴天 伴奏、/点歌 晴天 伴奏-6（伴奏轻 6 dB）\n"
+                "/点歌 歌名 伴奏[±dB]　带伴奏翻唱，如 /点歌 晴天 伴奏、伴奏-6（轻 6 dB）、伴奏+6（响 6 dB）\n"
                 "/音色　音色广场链接\n\n"
                 "要和声可对 AI 说「加和声」；音色省略时使用插件配置的默认音色，未配置则用网关默认；自有音色可登录音色广场后在「上传音色」页自助提交（自动审核），详见 /音色。\n"
                 "也可以直接对 LLM 说「唱一首《歌名》」，LLM 会自动调用工具。\n"
@@ -778,8 +778,8 @@ class DeepSeekSingPlugin(Star):
         Args:
             song(string): 歌曲名；用户明确确认过的 B 站歌曲链接也可以直接传。
             voice(string, optional): 音色名（用户在音色广场挑好的名字），可先调用 list_sing_voices 获取广场链接。
-            instrumental_volume(int, optional): 伴奏增益（dB）：0 带原始音量伴奏，负数更轻（最小 -60）；仅当用户明确要伴奏时传 0，没提就不传（默认纯人声）。
-            backup_vocals_volume(int, optional): 和声增益（dB）：0 带和声（和声也会被转成所选音色），负数更轻；仅当用户明确要和声时传。
+            instrumental_volume(int, optional): 伴奏增益（dB）：0 带原始音量伴奏，负数更轻（最小 -60），正数更响（最大 +12）；仅当用户明确要伴奏时传 0，没提就不传（默认纯人声）。
+            backup_vocals_volume(int, optional): 和声增益（dB）：0 带和声（和声也会被转成所选音色），负数更轻（最小 -60），正数更响（最大 +12）；仅当用户明确要和声时传。
         Returns:
             已受理提示；音频生成完成后会主动发送到当前会话。失败时以消息形式告知。
         '''
