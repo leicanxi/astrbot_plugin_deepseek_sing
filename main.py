@@ -314,7 +314,7 @@ class DeepSeekSingPlugin(Star):
 
     def _gen_params(self) -> dict[str, Any]:
         params: dict[str, Any] = {
-            "duration": _clamp_int(self._get("duration"), 25, 5, 120),
+            "duration": _clamp_int(self._get("duration"), 25, 5, 600),
             "start": _clamp_int(self._get("start"), 60, 0, 3600),
             "pitch": _clamp_int(self._get("pitch"), 0, -24, 24),
             "instrumental_volume": _clamp_int(

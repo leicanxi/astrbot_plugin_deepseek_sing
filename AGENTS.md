@@ -43,7 +43,7 @@ WebUI → 插件管理 → 「DeepSeek 唱歌」→ 启用。
 - **运行模式** `mode`：`flowbee` / `self-hosted`。
 - **FlowBee**：`flowbee_base_url`（保持默认 `https://flowbee.top/v1`）、`flowbee_api_key`。
 - **自托管**：`gateway_base_url`、`gateway_token`、`voices`（音色白名单 JSON）、`voices_file`（默认 `~/.octop/sing-voices.json`，需与网关一致）。
-- **演唱默认参数** `singing.*`：`voice` 默认音色（点歌不指定就用它；留空用网关默认）、`duration` 片段长度 5~120 秒默认 25、`start` 截取起点默认 60 秒、`pitch` 升降调 ±24 半音默认 0（不升降）、`pitch_mode` 人声音域（`no-change` / `male-to-female` / `female-to-male`）、`transport` 生成方式（保持 `auto`）。
+- **演唱默认参数** `singing.*`：`voice` 默认音色（点歌不指定就用它；留空用网关默认）、`duration` 片段长度 5~600 秒默认 25、`start` 截取起点默认 60 秒、`pitch` 升降调 ±24 半音默认 0（不升降）、`pitch_mode` 人声音域（`no-change` / `male-to-female` / `female-to-male`）、`transport` 生成方式（保持 `auto`）。
 - **使用限制** `limits.*`：`daily_per_user` / `daily_per_group` / `daily_total` 每 24 小时次数、`cooldown_seconds` 连点间隔；`-1` 不限（默认全不限）。窗口是「最近 24 小时」滚动；管理员始终不受限。计数文件在 `data/plugin_data/astrbot_plugin_deepseek_sing/usage.json`。
 
 改配置后需在插件管理里**重载插件**才生效；直接改文件的话在 `data/config/astrbot_plugin_deepseek_sing_config.json`（旧版扁平结构的配置也能兼容读取，配置页重新保存一次即迁移为分组结构）。
